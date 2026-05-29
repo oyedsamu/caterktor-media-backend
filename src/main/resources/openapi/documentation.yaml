@@ -1,0 +1,353 @@
+openapi: "3.1.0"
+info:
+  title: CaterKtor Media Backend
+  description: |
+    File transfer showcase backend for the CaterKtor KMP networking library.
+    Supports streaming multipart uploads, range-aware streaming downloads,
+    resumable transfers, and async processing state.
+
+    **Auth:** Pass any non-empty bearer token: `Authorization: Bearer <token>`
+  version: "1.0.0"
+
+servers:
+  - url: /
+    description: Local / Railway
+
+tags:
+  - name: Health
+  - name: Exports
+  - name: Media
+  - name: Debug
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    Meta:
+      type: object
+      properties:
+        requestId: { type: string }
+    ApiError:
+      type: object
+      properties:
+        code: { type: string }
+        message: { type: string }
+        details: { type: object }
+    ErrorEnvelope:
+      type: object
+      properties:
+        error: { $ref: '#/components/schemas/ApiError' }
+        meta: { $ref: '#/components/schemas/Meta' }
+
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/health:
+    get:
+      tags: [Health]
+      security: []
+      summary: Health check
+      responses:
+        "200":
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      status: { type: string, example: ok }
+                      version: { type: string, example: "1.0.0" }
+                  meta: { $ref: '#/components/schemas/Meta' }
+
+  /v1/capabilities:
+    get:
+      tags: [Health]
+      security: []
+      summary: Server capabilities
+      responses:
+        "200":
+          description: Capabilities info
+
+  /v1/exports:
+    post:
+      tags: [Exports]
+      summary: Create export job
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, from, to]
+              properties:
+                type: { type: string, example: transactions_csv }
+                from: { type: string, example: "2026-04-01" }
+                to: { type: string, example: "2026-04-30" }
+      responses:
+        "201":
+          description: Export job created (status=queued)
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
+  /v1/exports/{exportId}:
+    get:
+      tags: [Exports]
+      summary: Poll export job status
+      parameters:
+        - name: exportId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Export job status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      id: { type: string }
+                      status: { type: string, enum: [queued, processing, ready, failed] }
+                      downloadUrl: { type: string, nullable: true }
+                      contentLength: { type: integer, nullable: true }
+                      sha256: { type: string, nullable: true }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        "404":
+          description: Export not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
+  /v1/exports/{exportId}/download:
+    get:
+      tags: [Exports]
+      summary: Stream export artifact (only when ready)
+      parameters:
+        - name: exportId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: Range
+          in: header
+          schema: { type: string, example: "bytes=0-1023" }
+        - name: If-Range
+          in: header
+          schema: { type: string }
+      responses:
+        "200":
+          description: Full file stream
+          headers:
+            ETag: { schema: { type: string } }
+            Accept-Ranges: { schema: { type: string } }
+            Content-Length: { schema: { type: integer } }
+        "206":
+          description: Partial content (Range request)
+        "404":
+          description: EXPORT_NOT_FOUND or EXPORT_NOT_READY
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        "416":
+          description: Range not satisfiable
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
+  /v1/media:
+    post:
+      tags: [Media]
+      summary: Multipart upload (file + metadata)
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                metadata:
+                  type: string
+                  description: |
+                    JSON string: {"category":"report","origin":"mobile","filename":"report.pdf"}
+      responses:
+        "201":
+          description: Upload accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      id: { type: string }
+                      status: { type: string }
+                      size: { type: integer }
+                      sha256: { type: string }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        "413":
+          description: MEDIA_TOO_LARGE
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        "422":
+          description: UNSUPPORTED_MEDIA_TYPE
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
+  /v1/media/{mediaId}:
+    get:
+      tags: [Media]
+      summary: Get media metadata and processing state
+      parameters:
+        - name: mediaId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Media object
+        "404":
+          description: MEDIA_NOT_FOUND
+
+  /v1/media/{mediaId}/download:
+    get:
+      tags: [Media]
+      summary: Stream media file bytes (supports Range)
+      parameters:
+        - name: mediaId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: Range
+          in: header
+          schema: { type: string, example: "bytes=0-4095" }
+        - name: If-Range
+          in: header
+          schema: { type: string }
+      responses:
+        "200": { description: Full file }
+        "206": { description: Partial content }
+        "416": { description: Range not satisfiable }
+
+  /v1/media/{mediaId}/processing-stream:
+    get:
+      tags: [Media]
+      summary: SSE stream of processing events
+      description: |
+        Returns a `text/event-stream`. Events in order:
+        1. `upload.accepted`
+        2. `scan.completed`
+        3. `processing.completed` or `processing.failed`
+
+        Heartbeat comment `: heartbeat` every 10s while waiting.
+
+        Example:
+        ```
+        id: proc_1
+        event: upload.accepted
+        data: {"mediaId":"file_abc","status":"uploaded"}
+
+        id: proc_2
+        event: scan.completed
+        data: {"mediaId":"file_abc","status":"scanning_complete"}
+
+        id: proc_3
+        event: processing.completed
+        data: {"mediaId":"file_abc","status":"available"}
+        ```
+      parameters:
+        - name: mediaId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: SSE event stream
+          content:
+            text/event-stream:
+              schema: { type: string }
+
+  /v1/debug/status/{statusCode}:
+    get:
+      tags: [Debug]
+      summary: Return arbitrary HTTP status code
+      parameters:
+        - name: statusCode
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200": { description: Any status }
+
+  /v1/debug/delay:
+    get:
+      tags: [Debug]
+      summary: Delay response by ms milliseconds (max 30000)
+      parameters:
+        - name: ms
+          in: query
+          schema: { type: integer, default: 1000 }
+      responses:
+        "200": { description: Delayed response }
+
+  /v1/debug/chunked/{mediaId}:
+    get:
+      tags: [Debug]
+      summary: Stream file without Content-Length (chunked transfer)
+      parameters:
+        - name: mediaId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Chunked stream }
+
+  /v1/debug/interrupt/{mediaId}:
+    get:
+      tags: [Debug]
+      summary: Interrupt download after N bytes
+      parameters:
+        - name: mediaId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: after
+          in: query
+          schema: { type: integer, default: 1024 }
+      responses:
+        "200": { description: Partial then closed }
+
+  /v1/debug/fail-scan/{mediaId}:
+    post:
+      tags: [Debug]
+      summary: Force next scan to reject the file
+      parameters:
+        - name: mediaId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Flag set }
+
+  /v1/debug/reset:
+    post:
+      tags: [Debug]
+      summary: Clear uploads, restore seed artifacts
+      responses:
+        "200": { description: Reset complete }
