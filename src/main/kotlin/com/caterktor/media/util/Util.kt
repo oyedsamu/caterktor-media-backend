@@ -1,7 +1,7 @@
 package com.caterktor.media.util
 
+import com.caterktor.media.plugins.RequestIdKey
 import io.ktor.server.application.*
-import io.ktor.server.plugins.callid.*
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import java.security.MessageDigest
@@ -12,7 +12,9 @@ fun generateRequestId() = "req_${UUID.randomUUID().toString().replace("-", "").t
 fun generateTraceId() = "trc_${UUID.randomUUID().toString().replace("-", "").take(10)}"
 
 fun ApplicationCall.requestId(): String =
-    callId ?: request.headers["X-Request-ID"] ?: generateRequestId()
+    attributes.getOrNull(RequestIdKey)
+        ?: request.headers["X-Request-ID"]?.takeIf { it.isNotBlank() }
+        ?: generateRequestId()
 
 fun ByteArray.sha256Hex(): String {
     val digest = MessageDigest.getInstance("SHA-256")

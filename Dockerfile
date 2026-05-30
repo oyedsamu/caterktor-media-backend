@@ -1,7 +1,7 @@
 FROM eclipse-temurin:21-jdk-alpine AS builder
 WORKDIR /app
 COPY . .
-RUN ./gradlew shadowJar --no-daemon -q
+RUN ./gradlew buildFatJar --no-daemon -q
 
 FROM eclipse-temurin:21-jre-alpine AS runtime
 WORKDIR /app

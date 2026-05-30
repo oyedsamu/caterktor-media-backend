@@ -119,7 +119,7 @@ fun Route.mediaRoutes(processingService: ProcessingService, maxUploadBytes: Long
         call.respond(
             HttpStatusCode.Created,
             UploadResponse(
-                UploadResponseData(id, mediaObj.status.name, totalBytes, sha),
+                UploadResponseData(id, MediaStatus.uploaded.name, totalBytes, sha),
                 ApiMeta(call.requestId())
             )
         )
